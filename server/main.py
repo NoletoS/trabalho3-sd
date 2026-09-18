@@ -24,13 +24,41 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 
+import socket
+
+
+def get_local_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+
+
 def main() -> None:
     import uvicorn
 
+    host = os.getenv("SERVER_HOST", "0.0.0.0")
+    port = int(os.getenv("SERVER_PORT", "8000"))
+    local_ip = get_local_ip()
+
+    print("\n" + "=" * 62)
+    print("🚀 Servidor Processador Distribuído de Áudio Iniciado!")
+    print("=" * 62)
+    print(f"📡 Acesso Local (neste PC):")
+    print(f"   http://127.0.0.1:{port}")
+    print(f"   http://localhost:{port}\n")
+    print(f"🌐 Conexão de Outro PC (Use este IP no Cliente Desktop):")
+    print(f"   http://{local_ip}:{port}\n")
+    print(f"📖 Documentação Swagger da API:")
+    print(f"   http://{local_ip}:{port}/docs")
+    print("=" * 62 + "\n")
+
     uvicorn.run(
         app,
-        host=os.getenv("SERVER_HOST", "0.0.0.0"),
-        port=int(os.getenv("SERVER_PORT", "8000")),
+        host=host,
+        port=port,
     )
 
 

@@ -96,6 +96,19 @@ def _save_meta_json(
         json.dump(meta_data, f, indent=2, ensure_ascii=False)
 
 
+import os
+import socket
+
+
+def get_local_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     engine, session_factory = build_database(settings.database_url)
@@ -106,6 +119,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.storage_root.mkdir(parents=True, exist_ok=True)
         settings.trash_dir.mkdir(parents=True, exist_ok=True)
         Base.metadata.create_all(engine)
+        local_ip = get_local_ip()
+        port = int(os.getenv("SERVER_PORT", "8000"))
+        print(f"\n🌐 [REDE LOCAL] Servidor acessível em: http://{local_ip}:{port}")
+        print(f"📖 [SWAGGER] Documentação: http://{local_ip}:{port}/docs\n")
         yield
         engine.dispose()
 
