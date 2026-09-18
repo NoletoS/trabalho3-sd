@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -22,6 +22,12 @@ class MediaJob(Base):
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     input_path: Mapped[str] = mapped_column(Text, nullable=False)
     output_path: Mapped[str] = mapped_column(Text, nullable=False)
+    original_waveform_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_waveform_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    meta_json_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    processed_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_trashed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
@@ -32,3 +38,4 @@ class MediaJob(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    trashed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -1,4 +1,6 @@
 # Python
+.venv/
+venv/
 server/venv/
 client/venv/
 __pycache__/

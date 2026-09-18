@@ -4,7 +4,12 @@ Aceita tanto ``python main.py`` quanto ``uvicorn main:app``.
 """
 
 import os
+import sys
+from pathlib import Path
 
+server_dir = str(Path(__file__).resolve().parent)
+if server_dir not in sys.path:
+    sys.path.insert(0, server_dir)
 
 try:
     from app.main import app

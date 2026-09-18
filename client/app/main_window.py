@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import json
+import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal, Slot
-from PySide6.QtGui import QColor
+client_dir = str(Path(__file__).resolve().parent.parent)
+if client_dir not in sys.path:
+    sys.path.insert(0, client_dir)
+
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal, Slot
+from PySide6.QtGui import QColor, QIcon, QImage, QPixmap
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -20,21 +29,31 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSlider,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from .api import MediaApi
+from app.api import MediaApi
 
 
 OPERATIONS = {
-    "Converter para MP4": "convert_mp4",
-    "Extrair áudio (MP3)": "extract_mp3",
-    "Compactar vídeo": "compress_video",
+    "🔊 Normalização de Volume (EBU R128 loudnorm)": "normalize_volume",
+    "🎧 Converter para MP3 (190 kbps)": "convert_mp3",
+    "🎼 Converter para WAV (PCM 16-bit)": "convert_wav",
+    "🎙️ Extrair áudio (MP3)": "extract_mp3",
+    "🎸 Realce de Graves (Bass Boost)": "bass_boost",
+    "⚡ Acelerar Áudio (1.25x)": "speed_up",
+    "🐢 Desacelerar Áudio (0.85x)": "slow_down",
+    "🎬 Converter Vídeo para MP4": "convert_mp4",
+    "📦 Compactar vídeo": "compress_video",
 }
 OPERATION_LABELS = {value: label for label, value in OPERATIONS.items()}
+
 STATUS_LABELS = {
     "pending": "Aguardando",
     "processing": "Processando",
@@ -48,12 +67,11 @@ STATUS_STYLES = {
     "failed": ("#ff7a8a", "#431923", "#842f41"),
 }
 
-
 STYLESHEET = """
 QMainWindow, QWidget#centralWidget {
     background-color: #07110d;
     color: #eeeade;
-    font-family: "Segoe UI";
+    font-family: "Segoe UI", "Inter", sans-serif;
     font-size: 13px;
 }
 QLabel { color: #e9e7dc; background: transparent; }
@@ -64,12 +82,12 @@ QLabel#brandMark {
     font-size: 18px;
     font-weight: 800;
 }
-QLabel#titleLabel { color: #fff8dc; font-size: 26px; font-weight: 700; }
+QLabel#titleLabel { color: #fff8dc; font-size: 24px; font-weight: 700; }
 QLabel#subtitleLabel { color: #82988f; font-size: 13px; }
-QLabel#sectionTitle { color: #f7f1d7; font-size: 16px; font-weight: 650; }
+QLabel#sectionTitle { color: #f7f1d7; font-size: 15px; font-weight: 650; }
 QLabel#mutedLabel, QLabel#fieldLabel { color: #82988f; }
 QLabel#fieldLabel { font-size: 12px; font-weight: 600; }
-QLabel#statValue { color: #ffffff; font-size: 25px; font-weight: 700; }
+QLabel#statValue { color: #ffffff; font-size: 24px; font-weight: 700; }
 QLabel#statCaption { color: #87998f; font-size: 12px; font-weight: 600; }
 QLabel#countBadge {
     color: #e0cc88;
@@ -79,39 +97,31 @@ QLabel#countBadge {
     padding: 3px 9px;
     font-size: 11px;
 }
-QFrame#card, QFrame#statCard, QFrame#connectionCard {
+QFrame#card, QFrame#statCard, QFrame#playerCard {
     background-color: #0e1c17;
     border: 1px solid #223b31;
-    border-radius: 15px;
+    border-radius: 14px;
 }
-QFrame#statAccentPurple { background-color: #d4af37; border-radius: 2px; }
-QFrame#statAccentBlue { background-color: #9fbd61; border-radius: 2px; }
 QFrame#statAccentGreen { background-color: #36c783; border-radius: 2px; }
+QFrame#statAccentGold { background-color: #d4af37; border-radius: 2px; }
+QFrame#statAccentBlue { background-color: #38bdf8; border-radius: 2px; }
 QFrame#statAccentRed { background-color: #f2667a; border-radius: 2px; }
 QLineEdit, QComboBox {
     color: #f0ede2;
     background-color: #091510;
     border: 1px solid #29463a;
-    border-radius: 9px;
-    padding: 10px 12px;
+    border-radius: 8px;
+    padding: 9px 12px;
     selection-background-color: #2b7a58;
 }
 QLineEdit:focus, QComboBox:focus { border: 1px solid #d4af37; }
 QLineEdit:read-only { color: #adb9b1; background-color: #0a1712; }
-QComboBox::drop-down { border: none; width: 30px; }
-QComboBox QAbstractItemView {
-    color: #f0ede2;
-    background-color: #12231c;
-    border: 1px solid #315044;
-    selection-background-color: #2b7a58;
-    padding: 5px;
-}
 QPushButton {
     color: #d8ded8;
     background-color: #172a22;
     border: 1px solid #315044;
-    border-radius: 9px;
-    padding: 9px 15px;
+    border-radius: 8px;
+    padding: 9px 14px;
     font-weight: 600;
 }
 QPushButton:hover { background-color: #203a30; border-color: #4e6b5d; }
@@ -121,16 +131,24 @@ QPushButton#primaryButton {
     color: #07110d;
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #e0b84b, stop:1 #42c98d);
     border: none;
-    padding: 11px 20px;
+    padding: 10px 18px;
+    font-weight: 700;
 }
 QPushButton#primaryButton:hover { background-color: #ebcb6b; }
-QPushButton#successButton {
-    color: #71e5b3;
-    background-color: #102c25;
-    border-color: #245a49;
+QPushButton#playButton {
+    color: #05100c;
+    background-color: #36c783;
+    border: none;
+    padding: 8px 14px;
+    font-weight: 700;
 }
-QPushButton#successButton:hover { background-color: #153a30; }
-QPushButton#compactButton { padding: 8px 12px; }
+QPushButton#playButton:hover { background-color: #4ade80; }
+QPushButton#dangerButton {
+    color: #fca5a5;
+    background-color: #2a1518;
+    border: 1px solid #5c272e;
+}
+QPushButton#dangerButton:hover { background-color: #3a1a1f; }
 QTableWidget {
     color: #e5e8df;
     background-color: #0e1c17;
@@ -148,459 +166,656 @@ QHeaderView::section {
     background-color: #0b1712;
     border: none;
     border-bottom: 1px solid #2a463a;
-    padding: 11px 9px;
+    padding: 10px 8px;
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
 }
-QProgressBar {
-    color: #eee9d7;
-    background-color: #091510;
-    border: 1px solid #2b463b;
-    border-radius: 6px;
-    text-align: center;
-    font-size: 11px;
-    font-weight: 600;
+QSlider::groove:horizontal {
+    border: none;
+    height: 6px;
+    background: #15261f;
+    border-radius: 3px;
 }
-QProgressBar::chunk { background-color: #d4af37; border-radius: 5px; }
-QScrollBar:vertical { background: #0b1712; width: 9px; margin: 0; }
-QScrollBar::handle:vertical { background: #385649; border-radius: 4px; min-height: 24px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QStatusBar { color: #788e84; background-color: #07110d; border-top: 1px solid #1d352b; }
-QToolTip { color: #f4efd8; background-color: #172820; border: 1px solid #496554; padding: 6px; }
+QSlider::sub-page:horizontal {
+    background: #36c783;
+    border-radius: 3px;
+}
+QSlider::handle:horizontal {
+    background: #f0ede2;
+    border: 1px solid #245a49;
+    width: 14px;
+    margin-top: -4px;
+    margin-bottom: -4px;
+    border-radius: 7px;
+}
 """
 
 
 class WorkerSignals(QObject):
-    success = Signal(object)
+    finished = Signal(object)
     error = Signal(str)
 
 
 class Worker(QRunnable):
-    def __init__(self, function: Callable[[], Any]) -> None:
+    def __init__(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
         super().__init__()
-        self.function = function
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
         self.signals = WorkerSignals()
 
     @Slot()
     def run(self) -> None:
         try:
-            self.signals.success.emit(self.function())
+            result = self.fn(*self.args, **self.kwargs)
+            self.signals.finished.emit(result)
         except Exception as exc:
             self.signals.error.emit(str(exc))
+
+
+class MetaDialog(QDialog):
+    def __init__(self, meta_data: dict[str, Any], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Metadados: meta.json ({meta_data.get('id', '')})")
+        self.resize(650, 480)
+        self.setStyleSheet(STYLESHEET)
+
+        layout = QVBoxLayout(self)
+        title = QLabel(f"📄 Arquivo meta.json — Job {meta_data.get('id', '')}")
+        title.setObjectName("sectionTitle")
+        layout.addWidget(title)
+
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setStyleSheet(
+            "background-color: #08120d; color: #a7f3d0; font-family: 'JetBrains Mono', 'Courier New'; font-size: 12px; border: 1px solid #203c31; border-radius: 8px; padding: 12px;"
+        )
+        text_edit.setPlainText(json.dumps(meta_data, indent=2, ensure_ascii=False))
+        layout.addWidget(text_edit)
+
+        btn_close = QPushButton("Fechar")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close, alignment=Qt.AlignmentFlag.AlignRight)
 
 
 class MainWindow(QMainWindow):
     def __init__(self, api: MediaApi) -> None:
         super().__init__()
         self.api = api
-        self.jobs: list[dict[str, Any]] = []
-        self.pool = QThreadPool.globalInstance()
-        self.setWindowTitle("MediaFlow — Processador Distribuído")
-        self.setMinimumSize(980, 680)
-        self.resize(1180, 780)
+        self.thread_pool = QThreadPool()
+        self.selected_job: dict[str, Any] | None = None
+        self.showing_trash = False
+        self.cached_jobs: list[dict[str, Any]] = []
+
+        # Configurar Player de Áudio
+        self.player = QMediaPlayer(self)
+        self.audio_output = QAudioOutput(self)
+        self.player.setAudioOutput(self.audio_output)
+        self.audio_output.setVolume(0.8)
+
+        self.player.positionChanged.connect(self.on_player_position_changed)
+        self.player.durationChanged.connect(self.on_player_duration_changed)
+        self.player.playbackStateChanged.connect(self.on_playback_state_changed)
+
+        self.setup_ui()
         self.setStyleSheet(STYLESHEET)
-        self._build_ui()
 
+        # Polling periódico de status
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh_jobs)
+        self.timer.timeout.connect(self.refresh_data)
         self.timer.start(3000)
-        self.check_health()
-        self.refresh_jobs()
 
-    @staticmethod
-    def _button(text: str, object_name: str = "") -> QPushButton:
-        button = QPushButton(text)
-        if object_name:
-            button.setObjectName(object_name)
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        return button
+        self.refresh_data()
 
-    @staticmethod
-    def _field_label(text: str) -> QLabel:
-        label = QLabel(text.upper())
-        label.setObjectName("fieldLabel")
-        return label
+    def setup_ui(self) -> None:
+        self.setWindowTitle("Processador Distribuído de Áudio e Mídia (PySide6)")
+        self.resize(1180, 840)
 
-    @staticmethod
-    def _stat_card(caption: str, accent_name: str) -> tuple[QFrame, QLabel]:
-        card = QFrame()
-        card.setObjectName("statCard")
-        layout = QHBoxLayout(card)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(13)
-        accent = QFrame()
-        accent.setObjectName(accent_name)
-        accent.setFixedSize(4, 42)
-        layout.addWidget(accent)
-        text = QVBoxLayout()
-        text.setSpacing(0)
-        value = QLabel("0")
-        value.setObjectName("statValue")
-        label = QLabel(caption)
-        label.setObjectName("statCaption")
-        text.addWidget(value)
-        text.addWidget(label)
-        layout.addLayout(text)
-        layout.addStretch()
-        return card, value
-
-    def _build_ui(self) -> None:
         central = QWidget()
         central.setObjectName("centralWidget")
-        root = QVBoxLayout(central)
-        root.setContentsMargins(28, 24, 28, 20)
-        root.setSpacing(17)
+        self.setCentralWidget(central)
 
-        header = QHBoxLayout()
-        header.setSpacing(14)
-        brand = QLabel("MF")
-        brand.setObjectName("brandMark")
-        brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        brand.setFixedSize(46, 46)
-        header.addWidget(brand)
-        heading = QVBoxLayout()
-        heading.setSpacing(1)
-        title = QLabel("MediaFlow")
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(16)
+
+        # Header
+        header_layout = QHBoxLayout()
+        brand_icon = QLabel(" ♬ ")
+        brand_icon.setObjectName("brandMark")
+        brand_icon.setFixedSize(38, 38)
+        brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_layout.addWidget(brand_icon)
+
+        title_col = QVBoxLayout()
+        title = QLabel("Processador Distribuído de Áudio")
         title.setObjectName("titleLabel")
-        subtitle = QLabel("Processamento distribuído de áudio e vídeo")
+        subtitle = QLabel("Cliente Desktop PySide6 • HTTP + FFmpeg + PostgreSQL • Subpastas UUID")
         subtitle.setObjectName("subtitleLabel")
-        heading.addWidget(title)
-        heading.addWidget(subtitle)
-        header.addLayout(heading)
-        header.addStretch()
+        title_col.addWidget(title)
+        title_col.addWidget(subtitle)
+        header_layout.addLayout(title_col)
 
-        connection = QFrame()
-        connection.setObjectName("connectionCard")
-        connection_layout = QHBoxLayout(connection)
-        connection_layout.setContentsMargins(12, 7, 12, 7)
-        connection_layout.setSpacing(8)
-        self.connection_dot = QLabel("●")
-        self.connection_dot.setStyleSheet("color: #f6c76b; font-size: 14px;")
-        self.connection_status = QLabel("Verificando servidor")
-        connection_layout.addWidget(self.connection_dot)
-        connection_layout.addWidget(self.connection_status)
-        header.addWidget(connection)
-        root.addLayout(header)
+        header_layout.addStretch()
 
-        stats = QGridLayout()
-        stats.setHorizontalSpacing(12)
-        stat_specs = [
-            ("Total de tarefas", "statAccentPurple", "stat_total"),
-            ("Em processamento", "statAccentBlue", "stat_processing"),
-            ("Concluídos", "statAccentGreen", "stat_completed"),
-            ("Com falha", "statAccentRed", "stat_failed"),
-        ]
-        for column, (caption, accent, attribute) in enumerate(stat_specs):
-            card, value = self._stat_card(caption, accent)
-            setattr(self, attribute, value)
-            stats.addWidget(card, 0, column)
-            stats.setColumnStretch(column, 1)
-        root.addLayout(stats)
+        # Status badge do servidor
+        self.health_badge = QLabel("● Conectando...")
+        self.health_badge.setObjectName("countBadge")
+        header_layout.addWidget(self.health_badge)
 
+        main_layout.addLayout(header_layout)
+
+        # Splitter com Envio (esquerda) e Lista + Player (direita)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # --- PAINEL ESQUERDO: ENVIO ---
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 10, 0)
+        left_layout.setSpacing(14)
+
+        # Card de Upload
         upload_card = QFrame()
         upload_card.setObjectName("card")
-        upload = QVBoxLayout(upload_card)
-        upload.setContentsMargins(20, 17, 20, 19)
-        upload.setSpacing(11)
-        upload_header = QHBoxLayout()
-        upload_title = QLabel("Novo processamento")
-        upload_title.setObjectName("sectionTitle")
-        upload_hint = QLabel("Selecione a mídia e o formato de saída")
-        upload_hint.setObjectName("mutedLabel")
-        upload_header.addWidget(upload_title)
-        upload_header.addSpacing(8)
-        upload_header.addWidget(upload_hint)
-        upload_header.addStretch()
-        upload.addLayout(upload_header)
+        up_layout = QVBoxLayout(upload_card)
+        up_layout.setContentsMargins(16, 16, 16, 16)
+        up_layout.setSpacing(12)
 
-        fields = QGridLayout()
-        fields.setHorizontalSpacing(12)
-        fields.setVerticalSpacing(7)
-        fields.addWidget(self._field_label("Arquivo de mídia"), 0, 0)
-        fields.addWidget(self._field_label("Operação"), 0, 2)
-        self.file_path = QLineEdit()
-        self.file_path.setReadOnly(True)
-        self.file_path.setPlaceholderText("Nenhum arquivo selecionado")
-        fields.addWidget(self.file_path, 1, 0)
-        choose_button = self._button("Escolher arquivo", "compactButton")
-        choose_button.clicked.connect(self.choose_file)
-        fields.addWidget(choose_button, 1, 1)
-        self.operation = QComboBox()
-        self.operation.addItems(OPERATIONS.keys())
-        fields.addWidget(self.operation, 1, 2)
-        self.send_button = self._button("Iniciar processamento", "primaryButton")
-        self.send_button.clicked.connect(self.submit_job)
-        fields.addWidget(self.send_button, 1, 3)
-        fields.setColumnStretch(0, 4)
-        fields.setColumnStretch(2, 2)
-        upload.addLayout(fields)
-        root.addWidget(upload_card)
+        up_title = QLabel("Novo Processamento de Áudio")
+        up_title.setObjectName("sectionTitle")
+        up_layout.addWidget(up_title)
 
-        server_card = QFrame()
-        server_card.setObjectName("card")
-        server_layout = QHBoxLayout(server_card)
-        server_layout.setContentsMargins(16, 11, 16, 11)
-        server_layout.setSpacing(10)
-        server_label = QLabel("API")
-        server_label.setObjectName("fieldLabel")
-        self.server_url = QLineEdit(self.api.base_url)
-        self.server_url.editingFinished.connect(self._update_server_url)
-        local_button = self._button("Usar servidor local", "compactButton")
-        local_button.clicked.connect(self._use_local_server)
-        server_layout.addWidget(server_label)
-        server_layout.addWidget(self.server_url, 1)
-        server_layout.addWidget(local_button)
-        root.addWidget(server_card)
+        up_layout.addWidget(QLabel("ARQUIVO DE ÁUDIO / MÍDIA:"))
+        file_row = QHBoxLayout()
+        self.file_input = QLineEdit()
+        self.file_input.setPlaceholderText("Selecione um arquivo...")
+        self.file_input.setReadOnly(True)
+        btn_browse = QPushButton("Procurar...")
+        btn_browse.clicked.connect(self.browse_file)
+        file_row.addWidget(self.file_input)
+        file_row.addWidget(btn_browse)
+        up_layout.addLayout(file_row)
 
-        jobs_card = QFrame()
-        jobs_card.setObjectName("card")
-        jobs_layout = QVBoxLayout(jobs_card)
-        jobs_layout.setContentsMargins(1, 15, 1, 1)
-        jobs_layout.setSpacing(10)
-        table_header = QHBoxLayout()
-        table_header.setContentsMargins(18, 0, 18, 0)
-        table_title = QLabel("Processamentos recentes")
-        table_title.setObjectName("sectionTitle")
-        self.count_badge = QLabel("0 itens")
-        self.count_badge.setObjectName("countBadge")
-        refresh_button = self._button("Atualizar", "compactButton")
-        refresh_button.clicked.connect(self.refresh_jobs)
-        self.download_button = self._button("Baixar resultado", "successButton")
-        self.download_button.clicked.connect(self.download_selected)
-        table_header.addWidget(table_title)
-        table_header.addWidget(self.count_badge)
-        table_header.addStretch()
-        table_header.addWidget(refresh_button)
-        table_header.addWidget(self.download_button)
-        jobs_layout.addLayout(table_header)
+        up_layout.addWidget(QLabel("OPERAÇÃO FFmpeg:"))
+        self.op_combo = QComboBox()
+        for label, val in OPERATIONS.items():
+            self.op_combo.addItem(label, val)
+        up_layout.addWidget(self.op_combo)
 
-        self.empty_state = QLabel("Nenhum processamento ainda. Envie sua primeira mídia acima.")
-        self.empty_state.setObjectName("mutedLabel")
-        self.empty_state.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_state.setMinimumHeight(52)
-        jobs_layout.addWidget(self.empty_state)
+        self.btn_send = QPushButton("⚡ Enviar para o Servidor")
+        self.btn_send.setObjectName("primaryButton")
+        self.btn_send.clicked.connect(self.submit_job)
+        up_layout.addWidget(self.btn_send)
 
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(
-            ["Arquivo", "Operação", "Estado", "Progresso", "Tamanho", "Detalhe"]
+        left_layout.addWidget(upload_card)
+
+        # Card de Especificação de Armazenamento
+        spec_card = QFrame()
+        spec_card.setObjectName("card")
+        spec_layout = QVBoxLayout(spec_card)
+        spec_layout.setContentsMargins(14, 14, 14, 14)
+        spec_layout.setSpacing(8)
+
+        spec_title = QLabel("Regras de Armazenamento")
+        spec_title.setObjectName("sectionTitle")
+        spec_layout.addWidget(spec_title)
+
+        spec_desc = QLabel(
+            "• <b>UUID Único:</b> Subpasta <code>storage/&lt;uuid&gt;/</code><br>"
+            "• <b>Áudio Original:</b> <code>original/audio.&lt;ext&gt;</code><br>"
+            "• <b>Áudio Processado:</b> <code>processed/audio.&lt;ext&gt;</code><br>"
+            "• <b>Waveform:</b> <code>waveform.png</code> gerada auto.<br>"
+            "• <b>Metadados:</b> <code>meta.json</code> com SHA-256.<br>"
+            "• <b>Lixeira:</b> <code>storage/trash/&lt;uuid&gt;/</code>"
         )
+        spec_desc.setTextFormat(Qt.TextFormat.RichText)
+        spec_desc.setStyleSheet("font-size: 11px; color: #82988f; line-height: 1.5;")
+        spec_layout.addWidget(spec_desc)
+
+        left_layout.addWidget(spec_card)
+        left_layout.addStretch()
+
+        splitter.addWidget(left_widget)
+
+        # --- PAINEL DIREITO: TABELA, PLAYER E WAVEFORM ---
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(10, 0, 0, 0)
+        right_layout.setSpacing(14)
+
+        # Barra superior da lista (Abas Ativos / Lixeira)
+        top_list_bar = QHBoxLayout()
+        self.lbl_list_title = QLabel("Processamentos Ativos")
+        self.lbl_list_title.setObjectName("sectionTitle")
+        top_list_bar.addWidget(self.lbl_list_title)
+        top_list_bar.addStretch()
+
+        self.btn_toggle_trash = QPushButton("🗑️ Ver Lixeira")
+        self.btn_toggle_trash.clicked.connect(self.toggle_trash_view)
+        top_list_bar.addWidget(self.btn_toggle_trash)
+
+        btn_refresh = QPushButton("🔄 Atualizar")
+        btn_refresh.clicked.connect(self.refresh_data)
+        top_list_bar.addWidget(btn_refresh)
+
+        right_layout.addLayout(top_list_bar)
+
+        # Tabela de Jobs
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Arquivo Original", "Operação", "Status", "Tamanho", "UUID"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(False)
-        self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(56)
-        header_view = self.table.horizontalHeader()
-        header_view.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header_view.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header_view.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        header_view.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        header_view.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        header_view.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
-        self.table.setColumnWidth(2, 126)
-        self.table.setColumnWidth(3, 145)
-        jobs_layout.addWidget(self.table, 1)
-        root.addWidget(jobs_card, 1)
+        self.table.itemSelectionChanged.connect(self.on_table_selection_changed)
+        right_layout.addWidget(self.table)
 
-        self.setCentralWidget(central)
-        self.statusBar().showMessage("Pronto para processar")
+        # --- PLAYER E WAVEFORM CARD ---
+        self.player_card = QFrame()
+        self.player_card.setObjectName("playerCard")
+        p_layout = QVBoxLayout(self.player_card)
+        p_layout.setContentsMargins(16, 16, 16, 16)
+        p_layout.setSpacing(10)
 
-    def _run(
-        self,
-        function: Callable[[], Any],
-        success: Callable[[Any], None],
-        error: Callable[[str], None] | None = None,
-    ) -> None:
-        worker = Worker(function)
-        worker.signals.success.connect(success)
-        worker.signals.error.connect(error or self._show_error)
-        self.pool.start(worker)
+        p_title_row = QHBoxLayout()
+        self.lbl_player_track = QLabel("Nenhum áudio selecionado")
+        self.lbl_player_track.setObjectName("sectionTitle")
+        p_title_row.addWidget(self.lbl_player_track)
+        p_title_row.addStretch()
 
-    def _update_server_url(self) -> None:
-        self.api.base_url = self.server_url.text().strip().rstrip("/")
-        self.check_health()
-        self.refresh_jobs()
+        self.btn_view_meta = QPushButton("📄 Ver meta.json")
+        self.btn_view_meta.setEnabled(False)
+        self.btn_view_meta.clicked.connect(self.open_meta_dialog)
+        p_title_row.addWidget(self.btn_view_meta)
 
-    def _use_local_server(self) -> None:
-        self.server_url.setText("http://127.0.0.1:8000")
-        self._update_server_url()
+        self.btn_action_trash = QPushButton("🗑️ Mover p/ Lixeira")
+        self.btn_action_trash.setObjectName("dangerButton")
+        self.btn_action_trash.setEnabled(False)
+        self.btn_action_trash.clicked.connect(self.action_trash_or_restore)
+        p_title_row.addWidget(self.btn_action_trash)
 
-    def choose_file(self) -> None:
+        self.btn_download = QPushButton("⬇️ Baixar Resultado")
+        self.btn_download.setEnabled(False)
+        self.btn_download.clicked.connect(self.download_selected)
+        p_title_row.addWidget(self.btn_download)
+
+        p_layout.addLayout(p_title_row)
+
+        # Waveform Display
+        self.lbl_waveform = QLabel("A forma de onda (waveform.png) aparecerá aqui")
+        self.lbl_waveform.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_waveform.setStyleSheet(
+            "background-color: #08120d; border: 1px solid #1c332a; border-radius: 8px; min-height: 80px; max-height: 120px; color: #52635c;"
+        )
+        p_layout.addWidget(self.lbl_waveform)
+
+        # Controles de Reprodução
+        controls_row = QHBoxLayout()
+
+        self.btn_play_original = QPushButton("▶ Tocar Original")
+        self.btn_play_original.setEnabled(False)
+        self.btn_play_original.clicked.connect(lambda: self.play_current(is_original=True))
+        controls_row.addWidget(self.btn_play_original)
+
+        self.btn_play_processed = QPushButton("▶ Tocar Processado")
+        self.btn_play_processed.setObjectName("playButton")
+        self.btn_play_processed.setEnabled(False)
+        self.btn_play_processed.clicked.connect(lambda: self.play_current(is_original=False))
+        controls_row.addWidget(self.btn_play_processed)
+
+        self.btn_pause = QPushButton("⏸ Pausar")
+        self.btn_pause.setEnabled(False)
+        self.btn_pause.clicked.connect(self.player.pause)
+        controls_row.addWidget(self.btn_pause)
+
+        self.btn_stop = QPushButton("⏹ Parar")
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.clicked.connect(self.player.stop)
+        controls_row.addWidget(self.btn_stop)
+
+        controls_row.addSpacing(14)
+        controls_row.addWidget(QLabel("Vol:"))
+        self.volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setValue(80)
+        self.volume_slider.setFixedWidth(80)
+        self.volume_slider.valueChanged.connect(lambda v: self.audio_output.setVolume(v / 100.0))
+        controls_row.addWidget(self.volume_slider)
+
+        p_layout.addLayout(controls_row)
+
+        # Barra de Progresso do Áudio
+        time_row = QHBoxLayout()
+        self.audio_time_lbl = QLabel("00:00 / 00:00")
+        self.audio_time_lbl.setStyleSheet("font-family: 'JetBrains Mono'; font-size: 11px; color: #82988f;")
+        self.audio_slider = QSlider(Qt.Orientation.Horizontal)
+        self.audio_slider.setRange(0, 1000)
+        self.audio_slider.sliderMoved.connect(self.set_player_position)
+
+        time_row.addWidget(self.audio_slider)
+        time_row.addWidget(self.audio_time_lbl)
+        p_layout.addLayout(time_row)
+
+        right_layout.addWidget(self.player_card)
+
+        splitter.addWidget(right_widget)
+        splitter.setSizes([380, 800])
+        main_layout.addWidget(splitter)
+
+    # --- LÓGICA E EVENTOS ---
+
+    def browse_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Selecionar mídia",
+            "Selecionar Arquivo de Áudio / Mídia",
             "",
-            "Mídia (*.mp4 *.mkv *.avi *.mov *.webm *.mpeg *.mpg *.mp3 *.wav *.flac *.m4a *.ogg)",
+            "Áudio e Vídeo (*.mp3 *.wav *.ogg *.flac *.m4a *.mp4 *.mkv *.avi *.mov *.webm);;Todos (*.*)",
         )
         if path:
-            self.file_path.setText(path)
-            self.statusBar().showMessage(f"Arquivo selecionado: {Path(path).name}", 4000)
-
-    def check_health(self) -> None:
-        self._run(self.api.health, self._health_ok, self._health_error)
-
-    def _health_ok(self, health: dict[str, Any]) -> None:
-        healthy = health["status"] == "ok"
-        self.connection_status.setText("Servidor online" if healthy else "Servidor degradado")
-        self.connection_dot.setStyleSheet(
-            f"color: {'#55d99f' if healthy else '#f6c76b'}; font-size: 14px;"
-        )
-        self.connection_status.setStyleSheet(
-            f"color: {'#9ce8c7' if healthy else '#f6c76b'}; font-weight: 600;"
-        )
-        self.connection_status.setToolTip(
-            f"Banco: {health['database']} | FFmpeg: {health['ffmpeg']}"
-        )
-
-    def _health_error(self, message: str) -> None:
-        self.connection_status.setText("Servidor desconectado")
-        self.connection_dot.setStyleSheet("color: #ff6f82; font-size: 14px;")
-        self.connection_status.setStyleSheet("color: #ff8d9d; font-weight: 600;")
-        self.connection_status.setToolTip(message)
-        self.statusBar().showMessage(
-            "Servidor indisponível. Use http://127.0.0.1:8000 neste computador.",
-            7000,
-        )
+            self.file_input.setText(path)
 
     def submit_job(self) -> None:
-        path = self.file_path.text()
-        if not path:
-            QMessageBox.information(self, "Arquivo", "Escolha um arquivo de mídia.")
+        file_path = self.file_input.text().strip()
+        if not file_path:
+            QMessageBox.warning(self, "Aviso", "Selecione um arquivo primeiro.")
             return
-        operation = OPERATIONS[self.operation.currentText()]
-        self.send_button.setEnabled(False)
-        self.send_button.setText("Enviando…")
-        self.statusBar().showMessage("Enviando arquivo para o servidor…")
-        self._run(
-            lambda: self.api.create_job(path, operation),
-            self._job_submitted,
-            self._submit_error,
-        )
 
-    def _job_submitted(self, _job: dict[str, Any]) -> None:
-        self.send_button.setEnabled(True)
-        self.send_button.setText("Iniciar processamento")
-        self.file_path.clear()
-        self.statusBar().showMessage("Arquivo recebido. Processamento iniciado.", 5000)
-        self.refresh_jobs()
+        operation = self.op_combo.currentData()
+        self.btn_send.setEnabled(False)
+        self.btn_send.setText("Enviando...")
 
-    def _submit_error(self, message: str) -> None:
-        self.send_button.setEnabled(True)
-        self.send_button.setText("Iniciar processamento")
-        self._show_error(message)
+        def _task():
+            return self.api.create_job(file_path, operation)
 
-    def refresh_jobs(self) -> None:
-        self._run(self.api.list_jobs, self._render_jobs, self._health_error)
+        worker = Worker(_task)
+        worker.signals.finished.connect(self.on_job_created)
+        worker.signals.error.connect(self.on_job_error)
+        self.thread_pool.start(worker)
 
-    def _render_jobs(self, jobs: list[dict[str, Any]]) -> None:
-        self.jobs = jobs
-        total = len(jobs)
-        self.stat_total.setText(str(total))
-        self.stat_processing.setText(
-            str(sum(job["status"] in {"pending", "processing"} for job in jobs))
-        )
-        self.stat_completed.setText(str(sum(job["status"] == "completed" for job in jobs)))
-        self.stat_failed.setText(str(sum(job["status"] == "failed" for job in jobs)))
-        self.count_badge.setText(f"{total} {'item' if total == 1 else 'itens'}")
-        self.empty_state.setVisible(total == 0)
-        self.table.setVisible(total > 0)
-        self.table.setRowCount(total)
+    def on_job_created(self, job: dict[str, Any]) -> None:
+        self.btn_send.setEnabled(True)
+        self.btn_send.setText("⚡ Enviar para o Servidor")
+        self.file_input.clear()
+        if self.showing_trash:
+            self.toggle_trash_view()
+        else:
+            self.refresh_data()
+
+    def on_job_error(self, err: str) -> None:
+        self.btn_send.setEnabled(True)
+        self.btn_send.setText("⚡ Enviar para o Servidor")
+        QMessageBox.critical(self, "Erro", f"Falha ao enviar arquivo:\n{err}")
+
+    def toggle_trash_view(self) -> None:
+        self.showing_trash = not self.showing_trash
+        if self.showing_trash:
+            self.lbl_list_title.setText("Lixeira (trash/)")
+            self.btn_toggle_trash.setText("📂 Ver Ativos")
+        else:
+            self.lbl_list_title.setText("Processamentos Ativos")
+            self.btn_toggle_trash.setText("🗑️ Ver Lixeira")
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        # Atualizar Health
+        def _health_task():
+            return self.api.health()
+
+        h_worker = Worker(_health_task)
+        h_worker.signals.finished.connect(self.on_health_ok)
+        h_worker.signals.error.connect(self.on_health_fail)
+        self.thread_pool.start(h_worker)
+
+        # Atualizar Lista de Jobs
+        def _jobs_task():
+            return self.api.list_trash() if self.showing_trash else self.api.list_jobs()
+
+        j_worker = Worker(_jobs_task)
+        j_worker.signals.finished.connect(self.on_jobs_loaded)
+        self.thread_pool.start(j_worker)
+
+    def on_health_ok(self, data: dict[str, Any]) -> None:
+        status = data.get("status", "ok")
+        if status == "ok":
+            self.health_badge.setText("● PostgreSQL OK | FFmpeg OK")
+            self.health_badge.setStyleSheet("color: #67e0a8; border-color: #247052;")
+        else:
+            self.health_badge.setText(f"● Status: {status}")
+            self.health_badge.setStyleSheet("color: #efd06f; border-color: #6f5a21;")
+
+    def on_health_fail(self, _err: str) -> None:
+        self.health_badge.setText("● Servidor Offline")
+        self.health_badge.setStyleSheet("color: #ff7a8a; border-color: #842f41;")
+
+    def on_jobs_loaded(self, jobs: list[dict[str, Any]]) -> None:
+        self.cached_jobs = jobs
+        selected_uuid = self.selected_job.get("id") if self.selected_job else None
+
+        self.table.setRowCount(len(jobs))
+        selected_row = -1
 
         for row, job in enumerate(jobs):
-            file_item = QTableWidgetItem(job["original_name"])
-            file_item.setData(Qt.ItemDataRole.UserRole, job["id"])
-            file_item.setToolTip(job["original_name"])
-            operation_item = QTableWidgetItem(
-                OPERATION_LABELS.get(job["operation"], job["operation"])
-            )
-            size_item = QTableWidgetItem(self._format_size(job["file_size"]))
-            size_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if job.get("id") == selected_uuid:
+                selected_row = row
 
-            detail_text = job.get("error_message") or {
-                "pending": "Na fila do servidor",
-                "processing": "Processando com FFmpeg",
-                "completed": "Disponível para download",
-                "failed": "Falha no processamento",
-            }.get(job["status"], "")
-            detail_item = QTableWidgetItem(detail_text)
-            detail_item.setToolTip(detail_text)
-            if job["status"] == "failed":
-                detail_item.setForeground(QColor("#ff8d9d"))
-            elif job["status"] == "completed":
-                detail_item.setForeground(QColor("#74d9ae"))
+            name_item = QTableWidgetItem(job.get("original_name", ""))
+            op_label = OPERATION_LABELS.get(job.get("operation"), job.get("operation", ""))
+            op_item = QTableWidgetItem(op_label)
 
-            for column, item in (
-                (0, file_item),
-                (1, operation_item),
-                (4, size_item),
-                (5, detail_item),
-            ):
-                item.setTextAlignment(
-                    (Qt.AlignmentFlag.AlignLeft if column in {0, 5} else Qt.AlignmentFlag.AlignCenter)
-                    | Qt.AlignmentFlag.AlignVCenter
-                )
-                self.table.setItem(row, column, item)
+            st_val = job.get("status", "")
+            st_text = STATUS_LABELS.get(st_val, st_val)
+            st_item = QTableWidgetItem(st_text)
+            colors = STATUS_STYLES.get(st_val, ("#eee", "#222", "#444"))
+            st_item.setForeground(QColor(colors[0]))
 
-            foreground, background, border = STATUS_STYLES.get(
-                job["status"], ("#cbd5e6", "#1b2539", "#34435d")
-            )
-            status_label = QLabel(STATUS_LABELS.get(job["status"], job["status"]))
-            status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            status_label.setStyleSheet(
-                f"color:{foreground}; background-color:{background}; border:1px solid {border};"
-                "border-radius:9px; padding:5px 8px; font-size:11px; font-weight:700;"
-            )
-            status_container = QWidget()
-            status_layout = QHBoxLayout(status_container)
-            status_layout.setContentsMargins(9, 10, 9, 10)
-            status_layout.addWidget(status_label)
-            self.table.setCellWidget(row, 2, status_container)
+            size_kb = (job.get("file_size", 0) or 0) / 1024
+            size_item = QTableWidgetItem(f"{size_kb:.1f} KB")
 
-            progress = QProgressBar()
-            progress.setRange(0, 100)
-            progress.setValue(int(job["progress"]))
-            progress.setFixedHeight(20)
-            if job["status"] == "failed":
-                progress.setStyleSheet("QProgressBar::chunk { background-color: #e35970; }")
-            elif job["status"] == "completed":
-                progress.setStyleSheet("QProgressBar::chunk { background-color: #45c990; }")
-            progress_container = QWidget()
-            progress_layout = QHBoxLayout(progress_container)
-            progress_layout.setContentsMargins(9, 16, 9, 16)
-            progress_layout.addWidget(progress)
-            self.table.setCellWidget(row, 3, progress_container)
+            uuid_item = QTableWidgetItem(job.get("id", ""))
+
+            self.table.setItem(row, 0, name_item)
+            self.table.setItem(row, 1, op_item)
+            self.table.setItem(row, 2, st_item)
+            self.table.setItem(row, 3, size_item)
+            self.table.setItem(row, 4, uuid_item)
+
+        if selected_row >= 0:
+            self.table.selectRow(selected_row)
+        elif self.table.rowCount() > 0 and not self.selected_job:
+            self.table.selectRow(0)
+
+    def on_table_selection_changed(self) -> None:
+        selected_rows = self.table.selectionModel().selectedRows()
+        if not selected_rows:
+            self.selected_job = None
+            self.update_player_controls()
+            return
+
+        row = selected_rows[0].row()
+        if row < len(self.cached_jobs):
+            self.selected_job = self.cached_jobs[row]
+            self.update_player_controls()
+            self.load_waveform_preview()
+
+    def update_player_controls(self) -> None:
+        if not self.selected_job:
+            self.lbl_player_track.setText("Nenhum áudio selecionado")
+            self.btn_play_original.setEnabled(False)
+            self.btn_play_processed.setEnabled(False)
+            self.btn_view_meta.setEnabled(False)
+            self.btn_action_trash.setEnabled(False)
+            self.btn_download.setEnabled(False)
+            self.lbl_waveform.setText("A forma de onda (waveform.png) aparecerá aqui")
+            self.lbl_waveform.setPixmap(QPixmap())
+            return
+
+        job = self.selected_job
+        self.lbl_player_track.setText(f"♬ {job.get('original_name')} (UUID: {job.get('id')[:8]}...)")
+        self.btn_view_meta.setEnabled(True)
+
+        if self.showing_trash:
+            self.btn_action_trash.setText("♻️ Restaurar da Lixeira")
+            self.btn_action_trash.setObjectName("successButton")
+            self.btn_action_trash.setStyleSheet("color: #67e0a8; background-color: #103a2b;")
+        else:
+            self.btn_action_trash.setText("🗑️ Mover p/ Lixeira")
+            self.btn_action_trash.setObjectName("dangerButton")
+            self.btn_action_trash.setStyleSheet("color: #fca5a5; background-color: #2a1518;")
+        self.btn_action_trash.setEnabled(True)
+
+        has_orig = bool(job.get("original_audio_url"))
+        has_proc = bool(job.get("processed_audio_url")) and job.get("status") == "completed"
+
+        self.btn_play_original.setEnabled(has_orig)
+        self.btn_play_processed.setEnabled(has_proc)
+        self.btn_download.setEnabled(has_proc)
+
+    def load_waveform_preview(self) -> None:
+        if not self.selected_job:
+            return
+        job = self.selected_job
+        wave_url = job.get("processed_waveform_url") or job.get("original_waveform_url")
+        if not wave_url:
+            self.lbl_waveform.setText("Forma de onda ainda não disponível.")
+            self.lbl_waveform.setPixmap(QPixmap())
+            return
+
+        full_url = f"{self.api.base_url}{wave_url}"
+
+        def _fetch_img():
+            import requests
+            resp = requests.get(full_url, timeout=5)
+            if resp.ok:
+                return resp.content
+            return None
+
+        def _on_img_loaded(img_bytes: bytes | None):
+            if img_bytes:
+                img = QImage.fromData(img_bytes)
+                pixmap = QPixmap.fromImage(img)
+                scaled = pixmap.scaledToWidth(self.lbl_waveform.width() - 20, Qt.TransformationMode.SmoothTransformation)
+                self.lbl_waveform.setPixmap(scaled)
+            else:
+                self.lbl_waveform.setText("Forma de onda não carregada.")
+
+        worker = Worker(_fetch_img)
+        worker.signals.finished.connect(_on_img_loaded)
+        self.thread_pool.start(worker)
+
+    def play_current(self, is_original: bool) -> None:
+        if not self.selected_job:
+            return
+        job = self.selected_job
+        path_url = job.get("original_audio_url") if is_original else job.get("processed_audio_url")
+        if not path_url:
+            return
+
+        full_url = f"{self.api.base_url}{path_url}"
+        tag = "Original" if is_original else f"Processado ({job.get('operation')})"
+        self.lbl_player_track.setText(f"▶ Tocando [{tag}]: {job.get('original_name')}")
+
+        self.player.stop()
+        self.player.setSource(QUrl(full_url))
+        self.player.play()
+        self.btn_pause.setEnabled(True)
+        self.btn_stop.setEnabled(True)
+
+    def on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
+        if state == QMediaPlayer.PlaybackState.PlayingState:
+            self.btn_pause.setEnabled(True)
+            self.btn_stop.setEnabled(True)
+            self.btn_pause.setText("⏸ Pausar")
+        elif state == QMediaPlayer.PlaybackState.PausedState:
+            self.btn_pause.setText("▶ Continuar")
+        elif state == QMediaPlayer.PlaybackState.StoppedState:
+            self.btn_pause.setEnabled(False)
+            self.btn_stop.setEnabled(False)
+            self.btn_pause.setText("⏸ Pausar")
+            self.audio_slider.setValue(0)
+
+    def on_player_position_changed(self, position: int) -> None:
+        duration = self.player.duration()
+        if duration > 0:
+            self.audio_slider.setValue(int(position * 1000 / duration))
+            pos_str = f"{position // 60000:02d}:{(position % 60000) // 1000:02d}"
+            dur_str = f"{duration // 60000:02d}:{(duration % 60000) // 1000:02d}"
+            self.audio_time_lbl.setText(f"{pos_str} / {dur_str}")
+
+    def on_player_duration_changed(self, duration: int) -> None:
+        if duration > 0:
+            dur_str = f"{duration // 60000:02d}:{(duration % 60000) // 1000:02d}"
+            self.audio_time_lbl.setText(f"00:00 / {dur_str}")
+
+    def set_player_position(self, value: int) -> None:
+        duration = self.player.duration()
+        if duration > 0:
+            target = int(value * duration / 1000)
+            self.player.setPosition(target)
+
+    def open_meta_dialog(self) -> None:
+        if not self.selected_job:
+            return
+        job_id = self.selected_job["id"]
+
+        def _fetch_meta():
+            return self.api.get_meta(job_id)
+
+        def _on_meta_loaded(meta_data: dict[str, Any]):
+            dialog = MetaDialog(meta_data, self)
+            dialog.exec()
+
+        worker = Worker(_fetch_meta)
+        worker.signals.finished.connect(_on_meta_loaded)
+        worker.signals.error.connect(lambda err: QMessageBox.warning(self, "Aviso", f"Erro ao buscar meta.json:\n{err}"))
+        self.thread_pool.start(worker)
+
+    def action_trash_or_restore(self) -> None:
+        if not self.selected_job:
+            return
+        job_id = self.selected_job["id"]
+
+        if self.showing_trash:
+            # Restaurar
+            def _restore():
+                return self.api.restore_trash(job_id)
+
+            worker = Worker(_restore)
+            worker.signals.finished.connect(lambda _: self.refresh_data())
+            worker.signals.error.connect(lambda err: QMessageBox.critical(self, "Erro", f"Falha ao restaurar:\n{err}"))
+            self.thread_pool.start(worker)
+        else:
+            # Mover para Lixeira
+            if QMessageBox.question(
+                self, "Mover para Lixeira", "Deseja mover este processamento para a pasta trash/?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            ) != QMessageBox.StandardButton.Yes:
+                return
+
+            def _trash():
+                self.api.delete_job(job_id)
+
+            worker = Worker(_trash)
+            worker.signals.finished.connect(lambda _: self.refresh_data())
+            worker.signals.error.connect(lambda err: QMessageBox.critical(self, "Erro", f"Falha ao mover para lixeira:\n{err}"))
+            self.thread_pool.start(worker)
 
     def download_selected(self) -> None:
-        row = self.table.currentRow()
-        if row < 0:
-            QMessageBox.information(self, "Resultado", "Selecione um processamento.")
+        if not self.selected_job:
             return
-        job = self.jobs[row]
-        if job["status"] != "completed":
-            QMessageBox.information(self, "Resultado", "O processamento ainda não foi concluído.")
+        job = self.selected_job
+        default_name = f"{Path(job.get('original_name', 'audio')).stem}_{job.get('operation')}.mp3"
+        dest, _ = QFileDialog.getSaveFileName(self, "Salvar Arquivo Processado", default_name)
+        if not dest:
             return
-        extension = ".mp3" if job["operation"] == "extract_mp3" else ".mp4"
-        suggested = f"{Path(job['original_name']).stem}_processado{extension}"
-        destination, _ = QFileDialog.getSaveFileName(self, "Salvar resultado", suggested)
-        if not destination:
-            return
-        self.statusBar().showMessage("Baixando resultado…")
-        self._run(
-            lambda: self.api.download(job["id"], destination),
-            lambda path: self.statusBar().showMessage(f"Resultado salvo em {path}", 8000),
-        )
 
-    def _show_error(self, message: str) -> None:
-        self.statusBar().showMessage(message, 7000)
-        QMessageBox.critical(self, "Erro", message)
+        def _dl():
+            return self.api.download(job["id"], dest)
 
-    @staticmethod
-    def _format_size(size: int) -> str:
-        value = float(size)
-        for unit in ("B", "KB", "MB", "GB"):
-            if value < 1024 or unit == "GB":
-                return f"{value:.1f} {unit}"
-            value /= 1024
-        return f"{value:.1f} GB"
+        worker = Worker(_dl)
+        worker.signals.finished.connect(lambda p: QMessageBox.information(self, "Download Concluído", f"Arquivo salvo em:\n{p}"))
+        worker.signals.error.connect(lambda err: QMessageBox.critical(self, "Erro", f"Falha no download:\n{err}"))
+        self.thread_pool.start(worker)

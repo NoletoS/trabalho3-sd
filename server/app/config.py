@@ -36,9 +36,11 @@ class Settings:
         )
 
     @property
-    def input_dir(self) -> Path:
-        return self.storage_root / "input"
+    def trash_dir(self) -> Path:
+        return self.storage_root / "trash"
 
-    @property
-    def output_dir(self) -> Path:
-        return self.storage_root / "output"
+    def job_dir(self, job_id: str) -> Path:
+        return self.storage_root / job_id
+
+    def job_trash_dir(self, job_id: str) -> Path:
+        return self.trash_dir / job_id
