@@ -297,6 +297,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Calcular SHA-256 do arquivo original recebido
         original_checksum = calculate_sha256(input_path)
         processor.generate_waveform(input_path, original_waveform)
+        if extension.lower() not in {".mp3", ".wav", ".ogg"}:
+            processor.extract_audio_preview(input_path, original_dir / "audio_preview.mp3")
         media_info = processor.get_media_info(input_path)
 
         # Gravar meta.json inicial
@@ -419,7 +421,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if job is None or not job.input_path or not Path(job.input_path).is_file():
             raise HTTPException(404, "Áudio original não encontrado.")
         path = Path(job.input_path)
-        media_type = "audio/mpeg" if path.suffix == ".mp3" else ("audio/wav" if path.suffix == ".wav" else None)
+
+        # Se for vídeo ou formato não reproduzível diretamente em <audio>, servir/gerar áudio preview em MP3
+        if path.suffix.lower() not in {".mp3", ".wav", ".ogg"}:
+            preview_path = path.parent / "audio_preview.mp3"
+            if not preview_path.is_file():
+                processor.extract_audio_preview(path, preview_path)
+            if preview_path.is_file():
+                return FileResponse(preview_path, media_type="audio/mpeg")
+
+        media_type = "audio/mpeg" if path.suffix.lower() == ".mp3" else (
+            "audio/wav" if path.suffix.lower() == ".wav" else (
+                "audio/ogg" if path.suffix.lower() == ".ogg" else None
+            )
+        )
         return FileResponse(path, media_type=media_type)
 
     @application.get("/api/jobs/{job_id}/original/waveform", tags=["streaming"])

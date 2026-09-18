@@ -35,8 +35,14 @@ def client(tmp_path: Path):
         output_png_path.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRfake")
         return True
 
+    def fake_extract_audio(_input_path: Path, output_mp3_path: Path) -> bool:
+        output_mp3_path.parent.mkdir(parents=True, exist_ok=True)
+        output_mp3_path.write_bytes(b"fake-audio-preview")
+        return True
+
     application.state.processor.run = fake_run
     application.state.processor.generate_waveform = fake_waveform
+    application.state.processor.extract_audio_preview = fake_extract_audio
     application.state.processor.is_available = lambda: True
     application.state.processor.is_ffprobe_available = lambda: True
     with TestClient(application) as test_client:

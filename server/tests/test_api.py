@@ -54,6 +54,17 @@ def test_upload_creates_uuid_structure_and_meta_json(client):
     assert proc_audio.content == b"processed-audio-media"
 
 
+def test_video_upload_streams_extracted_audio(client):
+    created = create_job(client, name="video.mp4", operation="extract_mp3")
+    assert created.status_code == 202
+    job_id = created.json()["id"]
+
+    orig_audio = client.get(f"/api/jobs/{job_id}/original/audio")
+    assert orig_audio.status_code == 200
+    assert orig_audio.headers["content-type"] == "audio/mpeg"
+    assert orig_audio.content == b"fake-audio-preview"
+
+
 def test_trash_move_and_restore(client):
     job_id = create_job(client).json()["id"]
 

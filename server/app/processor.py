@@ -186,6 +186,31 @@ class FFmpegProcessor:
         except Exception:
             return False
 
+    def extract_audio_preview(self, input_path: Path, output_mp3_path: Path) -> bool:
+        """Extrai a faixa de áudio do arquivo original para MP3 para streaming e reprodução."""
+        if not self.is_available():
+            return False
+        output_mp3_path.parent.mkdir(parents=True, exist_ok=True)
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        cmd = [
+            self.executable, "-hide_banner", "-loglevel", "error", "-y",
+            "-i", str(input_path),
+            "-vn", "-c:a", "libmp3lame", "-q:a", "2",
+            str(output_mp3_path),
+        ]
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                creationflags=flags,
+            )
+            return output_mp3_path.is_file() and output_mp3_path.stat().st_size > 0
+        except Exception:
+            return False
+
     def get_media_info(self, file_path: Path) -> dict[str, Any]:
         """Extrai metadados de áudio/mídia via ffprobe em JSON."""
         if not self.is_ffprobe_available() or not file_path.is_file():

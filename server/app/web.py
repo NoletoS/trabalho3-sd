@@ -556,14 +556,14 @@ HTML_PAGE = """<!DOCTYPE html>
                     const originalAudio = job.original_audio_url ? `
                         <div class="audio-player-box">
                             <span>Áudio Original</span>
-                            <audio controls src="${job.original_audio_url}" preload="none"></audio>
+                            <audio controls src="${job.original_audio_url}" preload="metadata"></audio>
                         </div>
                     ` : '';
 
                     const processedAudio = job.processed_audio_url ? `
                         <div class="audio-player-box">
                             <span>Áudio Processado (${job.operation})</span>
-                            <audio controls src="${job.processed_audio_url}" preload="none"></audio>
+                            <audio controls src="${job.processed_audio_url}" preload="metadata"></audio>
                         </div>
                     ` : '';
 

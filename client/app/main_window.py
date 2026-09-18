@@ -257,6 +257,7 @@ class MainWindow(QMainWindow):
         self.player.positionChanged.connect(self.on_player_position_changed)
         self.player.durationChanged.connect(self.on_player_duration_changed)
         self.player.playbackStateChanged.connect(self.on_playback_state_changed)
+        self.player.errorOccurred.connect(self.on_player_error)
 
         self.setup_ui()
         self.setStyleSheet(STYLESHEET)
@@ -665,9 +666,14 @@ class MainWindow(QMainWindow):
             self.table.setItem(row, 4, uuid_item)
 
         if selected_row >= 0:
+            self.selected_job = jobs[selected_row]
             self.table.selectRow(selected_row)
+            self.update_player_controls()
         elif self.table.rowCount() > 0 and not self.selected_job:
+            self.selected_job = jobs[0]
             self.table.selectRow(0)
+            self.update_player_controls()
+            self.load_waveform_preview()
 
     def on_table_selection_changed(self) -> None:
         selected_rows = self.table.selectionModel().selectedRows()
@@ -757,7 +763,7 @@ class MainWindow(QMainWindow):
 
         full_url = f"{self.api.base_url}{path_url}"
         tag = "Original" if is_original else f"Processado ({job.get('operation')})"
-        self.lbl_player_track.setText(f"▶ Tocando [{tag}]: {job.get('original_name')}")
+        self.lbl_player_track.setText(f"▶ Carregando [{tag}]: {job.get('original_name')}...")
 
         self.player.stop()
         self.player.setSource(QUrl(full_url))
@@ -770,6 +776,9 @@ class MainWindow(QMainWindow):
             self.btn_pause.setEnabled(True)
             self.btn_stop.setEnabled(True)
             self.btn_pause.setText("⏸ Pausar")
+            current_text = self.lbl_player_track.text()
+            if "Carregando" in current_text:
+                self.lbl_player_track.setText(current_text.replace("Carregando", "Tocando"))
         elif state == QMediaPlayer.PlaybackState.PausedState:
             self.btn_pause.setText("▶ Continuar")
         elif state == QMediaPlayer.PlaybackState.StoppedState:
@@ -777,6 +786,11 @@ class MainWindow(QMainWindow):
             self.btn_stop.setEnabled(False)
             self.btn_pause.setText("⏸ Pausar")
             self.audio_slider.setValue(0)
+
+    def on_player_error(self, error: QMediaPlayer.Error, error_string: str) -> None:
+        self.lbl_player_track.setText(f"⚠️ Erro ao reproduzir áudio: {error_string}")
+        self.btn_pause.setEnabled(False)
+        self.btn_stop.setEnabled(False)
 
     def on_player_position_changed(self, position: int) -> None:
         duration = self.player.duration()
