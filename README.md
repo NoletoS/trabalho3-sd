@@ -154,3 +154,7 @@ python -m pytest -q
 
 Para uma validação manual completa, envie um arquivo real pelo cliente e confirme
 que o resultado abre em um reprodutor de mídia.
+
+## Print da aplicação
+<img width="1456" height="856" alt="image" src="https://github.com/user-attachments/assets/16172422-ed74-4cf3-92d8-4cdaf0dcbc75" />
+
