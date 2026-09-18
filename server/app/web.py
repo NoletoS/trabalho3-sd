@@ -417,7 +417,7 @@ HTML_PAGE = """<!DOCTYPE html>
                 </div>
             </div>
             <div class="system-status">
-                <span id="healthBadge" class="badge">● Verificando...</span>
+                <span id="healthBadge" class="badge" title="Verificando...">●</span>
                 <a href="/docs" target="_blank" class="btn-sm btn-outline">Swagger API Docs ↗</a>
             </div>
         </header>
@@ -500,15 +500,18 @@ HTML_PAGE = """<!DOCTYPE html>
                 const badge = document.getElementById('healthBadge');
                 if (data.status === 'ok') {
                     badge.className = 'badge';
-                    badge.innerHTML = '● PostgreSQL OK | FFmpeg OK';
+                    badge.innerHTML = '●';
+                    badge.title = 'Servidor Online';
                 } else {
                     badge.className = 'badge degraded';
-                    badge.innerHTML = `● Status: ${data.status} (DB: ${data.database}, FFmpeg: ${data.ffmpeg})`;
+                    badge.innerHTML = '●';
+                    badge.title = `Servidor Degradado (${data.ffmpeg === 'ok' ? 'FFmpeg OK' : 'FFmpeg Ausente'})`;
                 }
             } catch (err) {
                 const badge = document.getElementById('healthBadge');
                 badge.className = 'badge degraded';
-                badge.innerHTML = '● Servidor Desconectado';
+                badge.innerHTML = '●';
+                badge.title = 'Servidor Desconectado';
             }
         }
 

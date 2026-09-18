@@ -299,10 +299,33 @@ class MainWindow(QMainWindow):
 
         header_layout.addStretch()
 
-        # Status badge do servidor
-        self.health_badge = QLabel("● Conectando...")
-        self.health_badge.setObjectName("countBadge")
-        header_layout.addWidget(self.health_badge)
+        # Configuração de Conexão com a API (Permite alterar IP para outro PC)
+        conn_frame = QFrame()
+        conn_frame.setObjectName("card")
+        conn_layout = QHBoxLayout(conn_frame)
+        conn_layout.setContentsMargins(10, 6, 10, 6)
+        conn_layout.setSpacing(8)
+
+        lbl_api = QLabel("API:")
+        lbl_api.setObjectName("fieldLabel")
+        conn_layout.addWidget(lbl_api)
+
+        self.api_url_input = QLineEdit(self.api.base_url)
+        self.api_url_input.setPlaceholderText("http://IP:8000")
+        self.api_url_input.setFixedWidth(230)
+        self.api_url_input.returnPressed.connect(self.change_api_url)
+        conn_layout.addWidget(self.api_url_input)
+
+        btn_connect = QPushButton("Conectar")
+        btn_connect.clicked.connect(self.change_api_url)
+        conn_layout.addWidget(btn_connect)
+
+        self.health_badge = QLabel("●")
+        self.health_badge.setStyleSheet("color: #36c783; font-size: 18px; padding: 0 4px;")
+        self.health_badge.setToolTip("Conectando...")
+        conn_layout.addWidget(self.health_badge)
+
+        header_layout.addWidget(conn_frame)
 
         main_layout.addLayout(header_layout)
 
@@ -578,18 +601,36 @@ class MainWindow(QMainWindow):
         j_worker.signals.finished.connect(self.on_jobs_loaded)
         self.thread_pool.start(j_worker)
 
+    def change_api_url(self) -> None:
+        new_url = self.api_url_input.text().strip()
+        if not new_url:
+            new_url = "http://127.0.0.1:8000"
+            self.api_url_input.setText(new_url)
+        if not (new_url.startswith("http://") or new_url.startswith("https://")):
+            new_url = f"http://{new_url}"
+            self.api_url_input.setText(new_url)
+
+        self.api.set_base_url(new_url)
+        self.health_badge.setText("●")
+        self.health_badge.setStyleSheet("color: #f59e0b; font-size: 18px; padding: 0 4px;")
+        self.health_badge.setToolTip("Conectando...")
+        self.refresh_data()
+
     def on_health_ok(self, data: dict[str, Any]) -> None:
         status = data.get("status", "ok")
         if status == "ok":
-            self.health_badge.setText("● PostgreSQL OK | FFmpeg OK")
-            self.health_badge.setStyleSheet("color: #67e0a8; border-color: #247052;")
+            self.health_badge.setText("●")
+            self.health_badge.setStyleSheet("color: #36c783; font-size: 18px; padding: 0 4px;")
+            self.health_badge.setToolTip("Conectado à API")
         else:
-            self.health_badge.setText(f"● Status: {status}")
-            self.health_badge.setStyleSheet("color: #efd06f; border-color: #6f5a21;")
+            self.health_badge.setText("●")
+            self.health_badge.setStyleSheet("color: #f59e0b; font-size: 18px; padding: 0 4px;")
+            self.health_badge.setToolTip(f"Online (status: {status})")
 
     def on_health_fail(self, _err: str) -> None:
-        self.health_badge.setText("● Servidor Offline")
-        self.health_badge.setStyleSheet("color: #ff7a8a; border-color: #842f41;")
+        self.health_badge.setText("●")
+        self.health_badge.setStyleSheet("color: #ef4444; font-size: 18px; padding: 0 4px;")
+        self.health_badge.setToolTip("Desconectado do Servidor")
 
     def on_jobs_loaded(self, jobs: list[dict[str, Any]]) -> None:
         self.cached_jobs = jobs

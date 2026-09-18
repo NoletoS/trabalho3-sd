@@ -29,7 +29,7 @@ def main() -> None:
 
     uvicorn.run(
         app,
-        host=os.getenv("SERVER_HOST", "127.0.0.1"),
+        host=os.getenv("SERVER_HOST", "0.0.0.0"),
         port=int(os.getenv("SERVER_PORT", "8000")),
     )
 
